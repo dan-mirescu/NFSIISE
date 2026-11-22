@@ -884,3 +884,30 @@ so test in the menu or in a race, not during the intro.
 
 Default layout: steering left/right and accelerate/brake under the thumbs,
 `esc`, `c` (camera view) and `f11` (reset car) along the top edge.
+
+### Game data bundled into the APK (optional)
+
+`./gradlew assembleRelease -PgameDataDir="<CD-ROM copy>"` adds the game data to
+the APK as assets.  `prepareGameAssets` (a `Copy` task in
+`src/Android/app/build.gradle`) collects `fedata`, `gamedata`, `install.win`,
+`text.*` and the repo's `nfs2se.conf.template` (as `nfs2se.conf`) into
+`build/generated/gameAssets`, lower-cases every path and writes `filelist.txt`.
+Without the property only `nfs2se.conf` is bundled.
+
+* `filelist.txt` exists because the NDK asset API cannot enumerate
+  subdirectories (`AAssetDir_getNextFileName` lists files only).
+* The big formats are in `androidResources.noCompress` — they are compressed
+  already, so storing them keeps packaging and unpacking fast.  The APK ends up
+  around 530 MB.
+* Every other task `dependsOn prepareGameAssets`; a narrower rule failed because
+  the lint model tasks also read the asset directory.
+
+On Android, `WrapperInit` prefers `/sdcard/NFSIISE` when it actually holds game
+data, otherwise it `chdir`s to `SDL_GetAndroidExternalStoragePath()` and calls
+`extractBundledData()` (`Wrapper.c`), which reads `filelist.txt` through
+`SDL_LoadFile` (relative paths resolve to assets on Android), copies each
+missing file with `SDL_IOFromFile` → `fopen` in 1 MB chunks and creates parent
+directories as it goes.  Unpacking is needed because the game opens its data
+with plain stdio, which cannot read APK assets.  A message box announces the
+unpacking only when the list holds more than 50 files, so a data-less APK stays
+quiet while still dropping a default `nfs2se.conf` next to the game.

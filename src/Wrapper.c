@@ -703,6 +703,130 @@ static void SDLCALL androidPermissionCallback(void *userdata, const char *permis
 	(void)permission;
 	androidPermissionResult = granted ? 1 : 0;
 }
+
+static BOOL gameDataPresent(void)
+{
+	struct stat st;
+	return stat("gamedata", &st) == 0 && S_ISDIR(st.st_mode) &&
+	       stat("fedata/pc", &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+/* Create every missing directory along "path" (which is a file path - the
+   last component is not created). */
+static void makeParentDirs(char *path)
+{
+	for (char *slash = strchr(path, '/'); slash; slash = strchr(slash + 1, '/'))
+	{
+		*slash = '\0';
+		mkdir(path, 0755);
+		*slash = '/';
+	}
+}
+
+/* Copy one file out of the APK assets into the current directory. */
+static BOOL extractAsset(const char *relPath)
+{
+	SDL_IOStream *src = SDL_IOFromFile(relPath, "rb");
+	if (!src)
+		return false;
+
+	char *path = strdup(relPath);
+	makeParentDirs(path);
+	FILE *dst = fopen(path, "wb");
+	free(path);
+	if (!dst)
+	{
+		SDL_CloseIO(src);
+		return false;
+	}
+
+	BOOL ok = true;
+	char *buffer = (char *)malloc(1 << 20);
+	for (;;)
+	{
+		const size_t got = SDL_ReadIO(src, buffer, 1 << 20);
+		if (got == 0)
+		{
+			ok = SDL_GetIOStatus(src) == SDL_IO_STATUS_EOF;
+			break;
+		}
+		if (fwrite(buffer, 1, got, dst) != got)
+		{
+			ok = false;
+			break;
+		}
+	}
+	free(buffer);
+	fclose(dst);
+	SDL_CloseIO(src);
+
+	if (!ok)
+		remove(relPath);
+	return ok;
+}
+
+/* Game data can be baked into the APK (see "gameDataDir" in
+   src/Android/app/build.gradle).  "filelist.txt" lists every bundled file;
+   on the first run they are copied next to the current directory, because
+   the game opens its data with plain stdio, which cannot read assets. */
+static BOOL extractBundledData(void)
+{
+	size_t listSize = 0;
+	char *list = (char *)SDL_LoadFile("filelist.txt", &listSize);
+	if (!list)
+		return false; /* nothing bundled into this APK */
+
+	/* An APK without game data still carries a default nfs2se.conf, which is
+	   not worth a message box - only announce a real unpacking run. */
+	uint32_t count = 0;
+	for (size_t i = 0; i < listSize; ++i)
+	{
+		if (list[i] == '\n')
+			++count;
+	}
+	if (count > 50)
+	{
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, title,
+			"First run: unpacking the bundled game data.\n"
+			"This takes a while - the game starts when it is done.", NULL);
+	}
+
+	uint32_t done = 0, failed = 0;
+	char *line = list;
+	while (line < list + listSize)
+	{
+		char *end = strchr(line, '\n');
+		if (!end)
+			end = list + listSize;
+		char *trim = end;
+		while (trim > line && (trim[-1] == '\r' || trim[-1] == ' '))
+			--trim;
+		*trim = '\0';
+
+		if (*line)
+		{
+			struct stat st;
+			if (stat(line, &st) != 0)
+			{
+				if (extractAsset(line))
+					++done;
+				else
+				{
+					++failed;
+					SDL_Log("Cannot unpack \"%s\"", line);
+				}
+			}
+			if (((done + failed) & 0x3F) == 0)
+				SDL_Log("Unpacking game data: %u files", done + failed);
+		}
+
+		line = end + 1;
+	}
+	SDL_free(list);
+
+	SDL_Log("Unpacked %u files (%u failed)", done, failed);
+	return gameDataPresent();
+}
 #endif
 
 #ifdef SWAP_WINDOW_AND_GL_THREAD
@@ -737,9 +861,11 @@ void WrapperInit(void)
 		}
 	}
 	/* Game data location: /sdcard/NFSIISE (needs "all files access" on
-	   Android 11+), otherwise the app-specific external storage directory
-	   (/sdcard/Android/data/<package>/files), which needs no permission. */
-	if (chdir("/sdcard/NFSIISE") != 0)
+	   Android 11+) wins, so a manual copy can replace the bundled one.
+	   Otherwise the app-specific external storage directory
+	   (/sdcard/Android/data/<package>/files) is used, which needs no
+	   permission and is where data bundled into the APK is unpacked. */
+	if (chdir("/sdcard/NFSIISE") != 0 || !gameDataPresent())
 	{
 		const char *extPath = SDL_GetAndroidExternalStoragePath();
 		if (!extPath || chdir(extPath) != 0)
@@ -747,6 +873,8 @@ void WrapperInit(void)
 			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, "Cannot access the game data directory.", NULL);
 			exit(-1);
 		}
+		if (!gameDataPresent())
+			extractBundledData();
 	}
 #endif
 

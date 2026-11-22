@@ -144,6 +144,22 @@ cd src/Android
 ./gradlew assembleRelease      # needs your own signing config
 ```
 
+To bake the game data into the APK, point `gameDataDir` at your copy of the
+CD-ROM content (the directory holding `fedata`, `gamedata`, `install.win` and
+the `text.*` files, in any letter case):
+
+```sh
+./gradlew assembleRelease -PgameDataDir="/path/to/Need For Speed II SE"
+```
+
+The files are added as assets (lower-cased, and stored uncompressed since they
+are compressed formats already), which makes the APK about 530 MB.  On the
+first run the game unpacks them into
+`/sdcard/Android/data/org.zaps166.NFSIISE/files` — the game reads its data with
+plain stdio, which cannot read assets — and shows a message box while it does.
+Unpacking needs roughly as much free space as the APK and only happens once;
+a `/sdcard/NFSIISE` directory with game data in it still takes precedence.
+
 To build for other ABIs, change `abiFilters` in `src/Android/app/build.gradle`.
 Note that only 32-bit ABIs (`armeabi-v7a`) and `arm64-v8a` make sense: the
 wrapper truncates every pointer it hands to the translated game code to 32 bits.

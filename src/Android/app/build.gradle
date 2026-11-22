@@ -2,6 +2,57 @@ plugins {
     id 'com.android.application'
 }
 
+// Optionally bake the game data into the APK:
+//   ./gradlew assembleRelease -PgameDataDir="/path/to/Need For Speed II SE"
+// That directory is the copy of the CD-ROM content, i.e. it holds "fedata" and
+// "gamedata" (any letter case), "install.win" and the "text.*" files.  Without
+// the property only a default nfs2se.conf is bundled and the game expects its
+// data in /sdcard/NFSIISE (see README.md).
+def gameDataDir = project.findProperty('gameDataDir')?.toString()
+def gameAssetsDir = layout.buildDirectory.dir('generated/gameAssets')
+
+def prepareGameAssets = tasks.register('prepareGameAssets', Sync) { // Sync, so dropping -PgameDataDir also drops the data from the APK
+    description = 'Collects the game data that gets bundled into the APK'
+    into gameAssetsDir
+    includeEmptyDirs = false
+    caseSensitive = false // the CD-ROM copy is usually all upper case
+
+    from(rootProject.file('../../Need For Speed II SE')) {
+        include 'nfs2se.conf.template'
+        rename { 'nfs2se.conf' }
+    }
+    if (gameDataDir) {
+        from(gameDataDir) {
+            include 'fedata/**', 'gamedata/**', 'install.win', 'text.*'
+        }
+    }
+
+    // The game opens its data with plain stdio, which cannot read assets, so
+    // everything is unpacked on the first run - using this list, because the
+    // NDK asset API cannot enumerate subdirectories.
+    eachFile { it.path = it.path.toLowerCase() }
+    doLast {
+        def root = gameAssetsDir.get().asFile
+        def names = []
+        root.eachFileRecurse(groovy.io.FileType.FILES) { file ->
+            def relative = root.toPath().relativize(file.toPath()).toString().replace('\\', '/')
+            if (relative != 'filelist.txt') {
+                names << relative
+            }
+        }
+        new File(root, 'filelist.txt').text = names.sort().join('\n') + '\n'
+        logger.lifecycle("Bundling ${names.size()} game data file(s) into the APK")
+    }
+}
+
+// Everything that reads the asset directories has to wait for it to be filled
+// (asset merging, packaging and the lint models all look at it)
+tasks.configureEach { task ->
+    if (task.name != 'prepareGameAssets' && !task.name.startsWith('clean')) {
+        task.dependsOn prepareGameAssets
+    }
+}
+
 android {
     namespace = "org.zaps166.NFSIISE"
     compileSdk = 35
@@ -32,7 +83,14 @@ android {
             // SDL3's Java glue (org.libsdl.app.*) comes straight from the SDL sources
             java.srcDirs += ['jni/SDL/android-project/app/src/main/java']
             jniLibs.srcDir 'libs'
+            assets.srcDirs += [gameAssetsDir]
         }
+    }
+
+    androidResources {
+        // The game data is already compressed; storing it keeps the build
+        // (and the unpacking on the device) fast
+        noCompress += ['mus', 'dct', 'asf', 'qfs', 'viv', 'bnk', 'trk', 'fsh', 'col', 'win']
     }
 
     packaging {
