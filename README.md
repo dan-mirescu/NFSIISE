@@ -154,9 +154,10 @@ wrapper truncates every pointer it hands to the translated game code to 32 bits.
 * `libnfs2se.so` – the game and the wrapper (all of `src/` plus the
   `src/Cpp/NFS2SE.cpp` unity build),
 * `libmain.so` – the shared object SDL looks `SDL_main` up in. It is only a
-  loader stub (`src/Android/app/jni/src/Loader.c`): it reserves
-  `[0x10000000, 0x18000000)` and asks the bionic linker to map `libnfs2se.so`
-  there (`ANDROID_DLEXT_RESERVED_ADDRESS`) before calling `nfs2se_main`.
+  loader stub (`src/Android/app/jni/src/Loader.c`): it reserves 64 MB at the
+  first free low address (`0x10000000`, `0x14000000`, … – which one is free
+  differs per device) and asks the bionic linker to map `libnfs2se.so` there
+  (`ANDROID_DLEXT_RESERVED_ADDRESS`) before calling `nfs2se_main`.
   This is needed because on 64-bit Android every library is mapped far above
   4 GB, while the wrapper stores all pointers truncated to 32 bits (`push32`,
   `PTR32`); on Linux the same thing is achieved with `-no-pie`.

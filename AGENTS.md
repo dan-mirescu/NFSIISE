@@ -758,8 +758,8 @@ transpiled struct layout — a session for another day.
 ## Android arm64 port (November 2026)
 
 **Status:** `src/Android` builds an arm64-v8a APK (SDL3 3.4.20, GLES2 backend).
-Compiles and packages cleanly; **not yet run on a device** (no arm64 device or
-emulator available in the build environment).
+**Runs on a device** — verified on a Galaxy S25 (SM-S931B, Android 17): main
+menu, car/track selection and racing all render, touch input works.
 
 ### Why the game is not libmain.so
 
@@ -779,15 +779,25 @@ Therefore the APK ships two native libraries of ours:
 | `libnfs2se.so` | the whole wrapper + game (`src/*.c` + the `src/Cpp/NFS2SE.cpp` unity build + `MemoryTranslate.cpp`) |
 
 `SDL_main` in the stub:
-1. `mmap`s `[0x10000000, 0x18000000)` (128 MB, `PROT_NONE`, `MAP_FIXED_NOREPLACE`),
+1. `mmap`s a 64 MB `PROT_NONE` / `MAP_FIXED_NOREPLACE` range at the first
+   address of `candidate_addrs[]` that is free (`0x10000000`, `0x14000000`,
+   `0x0C000000`, `0x08000000`, `0x1C000000`, `0x18000000`, `0x38000000`,
+   `0x3C000000`),
 2. `android_dlopen_ext("libnfs2se.so", …, ANDROID_DLEXT_RESERVED_ADDRESS)` into
    that range,
 3. `dlsym("nfs2se_main")` and calls it.
 
-`libnfs2se.so` needs ~25 MB of address space (0x17c0728 incl. the ~20 MB BSS
-holding `DataLayout`/`BssLayout`), so 128 MB is generous.  **It must never be
-loaded via `System.loadLibrary`** — Java loading it first would map it high and
-the later `dlopen` would just return that handle.
+A list of candidates is needed because `0x10000000` is **not** free in an app
+process on every device — on the Galaxy S25 the reservation fails with `EEXIST`
+and the loader settles on `0x14000000`.  When every candidate fails the loader
+dumps all mappings below 4 GB to logcat (tag `NFSIISE`) before falling back to a
+plain `dlopen`, which then crashes on the first truncated pointer.
+
+`libnfs2se.so` needs ~24 MB of address space (0x16c72a0 in a release build,
+incl. the ~20 MB BSS holding `DataLayout`/`BssLayout`), so 64 MB is enough for
+any candidate.  **It must never be loaded via `System.loadLibrary`** — Java
+loading it first would map it high and the later `dlopen` would just return that
+handle.
 
 The reserved range is the gap between the pool chunks created by `pool_grow`
 (`[0x01B9E000,0x10000000)`, `[0x18000000,0x20000000)`, `[0x20000000,0x40000000)`,

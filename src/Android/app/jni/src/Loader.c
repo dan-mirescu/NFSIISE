@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 
@@ -36,10 +37,63 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 #define GAME_LIB      "libnfs2se.so"
-#define GAME_LIB_ADDR ((void *)(uintptr_t)0x10000000)
-#define GAME_LIB_SIZE ((size_t)0x08000000) /* 128 MB */
+#define GAME_LIB_SIZE ((size_t)0x04000000) /* 64 MB; the library needs ~24 MB */
+
+/* Candidate bases, in the order they are tried.  The first one is the range
+   pool_grow() leaves free for us; the others are fallbacks for devices where
+   something (the ART heap, for instance) already sits there - the game then
+   loses one pool chunk, which pool_grow() tolerates. */
+static const uintptr_t candidate_addrs[] = {
+	0x10000000, 0x14000000, 0x0C000000, 0x08000000,
+	0x1C000000, 0x18000000, 0x38000000, 0x3C000000,
+};
 
 typedef int (*nfs2se_main_t)(int argc, char *argv[]);
+
+/* Log every mapping below 4 GB, to show what is in the way. */
+static void logLowMappings(void)
+{
+	char line[512];
+	FILE *f = fopen("/proc/self/maps", "r");
+	if (!f)
+		return;
+	LOGE("Mappings below 4 GB:");
+	while (fgets(line, sizeof line, f))
+	{
+		unsigned long long start = 0, end = 0;
+		if (sscanf(line, "%llx-%llx", &start, &end) == 2 && start < 0x100000000ULL)
+		{
+			size_t len = strlen(line);
+			if (len && line[len - 1] == '\n')
+				line[len - 1] = '\0';
+			LOGE("  %s", line);
+		}
+	}
+	fclose(f);
+}
+
+static void *reserveLowRange(void)
+{
+	for (size_t i = 0; i < sizeof candidate_addrs / sizeof candidate_addrs[0]; ++i)
+	{
+		void *want = (void *)candidate_addrs[i];
+		void *got  = mmap(want, GAME_LIB_SIZE, PROT_NONE,
+		                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE,
+		                  -1, 0);
+		if (got == want)
+			return got;
+		if (got == MAP_FAILED)
+			LOGI("%p unavailable: %s", want, strerror(errno));
+		else
+		{
+			/* MAP_FIXED_NOREPLACE not honoured - the hint was ignored */
+			LOGI("%p unavailable (got %p)", want, got);
+			munmap(got, GAME_LIB_SIZE);
+		}
+	}
+	logLowMappings();
+	return NULL;
+}
 
 __attribute__((visibility("default")))
 int SDL_main(int argc, char *argv[])
@@ -47,17 +101,10 @@ int SDL_main(int argc, char *argv[])
 	void *handle = NULL;
 	nfs2se_main_t gameMain;
 
-	void *reserved = mmap(GAME_LIB_ADDR, GAME_LIB_SIZE, PROT_NONE,
-	                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE,
-	                      -1, 0);
-	if (reserved == MAP_FAILED)
+	void *reserved = reserveLowRange();
+	if (!reserved)
 	{
-		LOGE("Cannot reserve the low address range: %s", strerror(errno));
-	}
-	else if (reserved != GAME_LIB_ADDR)
-	{
-		LOGE("Low address range unavailable (got %p)", reserved);
-		munmap(reserved, GAME_LIB_SIZE);
+		LOGE("No free address range below 4 GB for %s", GAME_LIB);
 	}
 	else
 	{
