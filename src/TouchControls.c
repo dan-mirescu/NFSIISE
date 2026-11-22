@@ -482,9 +482,16 @@ static void emitLabel(float cx, float cy, float rx, float ry, const char *label,
 	if (len <= 0)
 		return;
 
-	/* Fit the whole label inside the button */
-	const float cellW = (rx * 1.3f) / (float)(len * 4 - 1);
-	const float cellH = cellW * (ry / rx);
+	/* Fit the whole label inside the button: the glyph box is limited both by
+	   the available width (len * 3 columns plus a gap between characters) and
+	   by the five rows of the font, otherwise a single character would be
+	   drawn far larger than the button. */
+	const float box = 1.3f;
+	float cellH = (box * ry) / 5.0f;
+	const float widthLimit = (box * ry) / (float)(len * 4 - 1);
+	if (widthLimit < cellH)
+		cellH = widthLimit;
+	const float cellW = cellH * (rx / ry);
 	const float totalW = cellW * (float)(len * 4 - 1);
 	const float totalH = cellH * 5.0f;
 	const float x0 = cx - totalW / 2.0f;
