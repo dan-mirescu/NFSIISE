@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- versionCode / versionName / minSdk / targetSdk live in app/build.gradle -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    android:versionCode="1"
-    android:versionName="@VERSION@"
     android:installLocation="auto" >
 
     <!-- OpenGL ES 2.0 -->
@@ -29,12 +28,19 @@
         android:required="false" />
 
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- Needed to read the game data from /sdcard/NFSIISE on Android 11+.
+         Without it the game falls back to its own external files directory
+         (/sdcard/Android/data/org.zaps166.NFSIISE/files). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application android:label="@string/app_name"
         android:icon="@mipmap/nfs2se"
         android:allowBackup="true"
+        android:requestLegacyExternalStorage="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+        android:enableOnBackInvokedCallback="false"
         android:hardwareAccelerated="true" >
 
         <activity android:name="NFSIISE"

@@ -7,6 +7,7 @@ Cross-platform wrapper for the Need For Speed™ II SE game with 3D acceleration
 - **Big-endian** support on Linux (still WIP)
 - **x86_64** support for Linux
 - **ARM64** (AArch64) support for Linux
+- **Android arm64** APK build (SDL3, GLES2)
 - **SDL3** port
 
 ## OpenGL
@@ -111,18 +112,66 @@ cmake .. -DCMAKE_TOOLCHAIN_FILE=/path/to/mingw-toolchain.cmake -DCMAKE_BUILD_TYP
 
 ## Android
 
-* Install SDK and NDK for chosen SDL3 version,
-* Set environment variables: `ANDROID_HOME` and `ANDROID_NDK_HOME`,
-* Download SDL3 source code and unpack it,
+The Android build produces an **arm64-v8a** APK (SDL3 + GLES2 backend).
+
+### Requirements
+
+* Android SDK: platform 35, build-tools, CMake, NDK **28.2.13676358**
+  (the version SDL3 3.4.x is built with),
+* JDK 17 or newer (the JBR bundled with Android Studio works),
+* SDL3 **source** code (3.4.x), unpacked somewhere.
+
+### Setup
+
+* Set `ANDROID_HOME` (or write `sdk.dir=` into `src/Android/local.properties`),
 * Create a symlink to the unpacked `SDL3-*` directory at `src/Android/app/jni/SDL`:
   ```sh
-  ln -s /path/to/SDL3-* src/Android/app/jni/SDL
+  ln -s /path/to/SDL3-3.4.20 src/Android/app/jni/SDL
   ```
-* Build with Gradle from `src/Android/`:
-  ```sh
-  cd src/Android
-  ./gradlew build
+  On Windows use a junction instead:
+  ```cmd
+  mklink /J src\Android\app\jni\SDL C:\path\to\SDL3-3.4.20
   ```
+  SDL3 is built from source by CMake and its Java glue (`org.libsdl.app.*`) is
+  compiled straight out of `jni/SDL/android-project`, so the symlink is the only
+  place the SDL version is configured.
+
+### Build
+
+```sh
+cd src/Android
+./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease      # needs your own signing config
+```
+
+To build for other ABIs, change `abiFilters` in `src/Android/app/build.gradle`.
+Note that only 32-bit ABIs (`armeabi-v7a`) and `arm64-v8a` make sense: the
+wrapper truncates every pointer it hands to the translated game code to 32 bits.
+
+### How the APK is laid out
+
+* `libSDL3.so` – built from the SDL3 sources,
+* `libnfs2se.so` – the game and the wrapper (all of `src/` plus the
+  `src/Cpp/NFS2SE.cpp` unity build),
+* `libmain.so` – the shared object SDL looks `SDL_main` up in. It is only a
+  loader stub (`src/Android/app/jni/src/Loader.c`): it reserves
+  `[0x10000000, 0x18000000)` and asks the bionic linker to map `libnfs2se.so`
+  there (`ANDROID_DLEXT_RESERVED_ADDRESS`) before calling `nfs2se_main`.
+  This is needed because on 64-bit Android every library is mapped far above
+  4 GB, while the wrapper stores all pointers truncated to 32 bits (`push32`,
+  `PTR32`); on Linux the same thing is achieved with `-no-pie`.
+  `libnfs2se.so` must therefore never be loaded with `System.loadLibrary`.
+
+### Game data
+
+Copy `gamedata`, `fedata`, `install.win`, `text.*` and `nfs2se.conf` (renamed
+from `nfs2se.conf.template`) into either
+
+* `/sdcard/NFSIISE` – needs "All files access" (`MANAGE_EXTERNAL_STORAGE`) to be
+  granted in the system settings on Android 11+, or
+* `/sdcard/Android/data/org.zaps166.NFSIISE/files` – the app-specific directory,
+  which needs no permission and is used automatically when the first one cannot
+  be opened.
 
 ## What works
 

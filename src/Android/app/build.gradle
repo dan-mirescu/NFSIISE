@@ -1,61 +1,62 @@
-def buildAsLibrary = project.hasProperty('BUILD_AS_LIBRARY');
-def buildAsApplication = !buildAsLibrary
-if (buildAsApplication) {
-    apply plugin: 'com.android.application'
-}
-else {
-    apply plugin: 'com.android.library'
+plugins {
+    id 'com.android.application'
 }
 
 android {
-    if (buildAsApplication) {
-        namespace "org.zaps166.NFSIISE"
-    }
-    compileSdkVersion 34
+    namespace = "org.zaps166.NFSIISE"
+    compileSdk = 35
+    ndkVersion = "28.2.13676358"
+
     defaultConfig {
-        minSdkVersion 19
-        targetSdkVersion 28
+        applicationId = "org.zaps166.NFSIISE"
+        minSdk = 21
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.4.0"
         externalNativeBuild {
-            ndkBuild {
-                arguments "APP_PLATFORM=android-19"
-                abiFilters 'armeabi-v7a'
+            cmake {
+                arguments "-DANDROID_STL=c++_static", "-DSDL_STATIC=OFF"
+                abiFilters 'arm64-v8a'
             }
         }
     }
+
+    externalNativeBuild {
+        cmake {
+            path = file('jni/CMakeLists.txt')
+        }
+    }
+
+    sourceSets {
+        main {
+            // SDL3's Java glue (org.libsdl.app.*) comes straight from the SDL sources
+            java.srcDirs += ['jni/SDL/android-project/app/src/main/java']
+            jniLibs.srcDir 'libs'
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // libnfs2se.so is dlopen()ed by name from the loader stub, so the
+            // native libraries have to be extracted to the filesystem
+            useLegacyPackaging = true
+        }
+    }
+
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled = false
             proguardFiles getDefaultProguardFile('proguard-android.txt')
         }
     }
-    applicationVariants.all { variant ->
-        tasks["merge${variant.name.capitalize()}Assets"]
-            .dependsOn("externalNativeBuild${variant.name.capitalize()}")
-    }
-    if (!project.hasProperty('EXCLUDE_NATIVE_LIBS')) {
-        sourceSets.main {
-            jniLibs.srcDir 'libs'
-        }
-        externalNativeBuild {
-            ndkBuild {
-                path 'jni/Android.mk'
-            }
-        }
-    }
-    lint {
-        abortOnError false
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
-    if (buildAsLibrary) {
-        libraryVariants.all { variant ->
-            variant.outputs.each { output ->
-                def outputFile = output.outputFile
-                if (outputFile != null && outputFile.name.endsWith(".aar")) {
-                    def fileName = "org.libsdl.app.aar";
-                    output.outputFile = new File(outputFile.parent, fileName);
-                }
-            }
-        }
+    lint {
+        abortOnError = false
     }
 }
 

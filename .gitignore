@@ -9,3 +9,12 @@ Thumbs.db
 Need For Speed II SE/fedata/
 Need For Speed II SE/gamedata/
 Need For Speed II SE/nfs2se
+
+# Android: symlink/junction to the SDL3 sources
+src/Android/app/jni/SDL
+.gradle/
+src/Android/.gradle/
+src/Android/local.properties
+src/Android/app/build/
+src/Android/app/.cxx/
+src/Android/build/

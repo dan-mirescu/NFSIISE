@@ -754,3 +754,82 @@ and ARM64 the BSS is truly zero, hitting the crash chain described above.
 **Long-term fix:** Move these fields into `DataLayout` (DATA section) with
 proper initialisers.  This is deferred because it requires regenerating the
 transpiled struct layout — a session for another day.
+
+## Android arm64 port (November 2026)
+
+**Status:** `src/Android` builds an arm64-v8a APK (SDL3 3.4.20, GLES2 backend).
+Compiles and packages cleanly; **not yet run on a device** (no arm64 device or
+emulator available in the build environment).
+
+### Why the game is not libmain.so
+
+Every pointer the wrapper hands to the translated game code is truncated to
+32 bits (`push32`, `PTR32`, and the `(int32_t)(intptr_t)` casts in the
+`DataLayout` initializers in `Memory.cpp`).  That is only lossless while code,
+DATA/BSS and string literals live in the low 4 GB — on Linux this is what
+`-no-pie` buys us.  On 64-bit Android every library is position independent and
+the dynamic linker maps it far above 4 GB, so the truncation would destroy every
+pointer.
+
+Therefore the APK ships two native libraries of ours:
+
+| Library | Contents |
+|---------|----------|
+| `libmain.so` | loader stub only (`src/Android/app/jni/src/Loader.c`); SDL looks up `SDL_main` here |
+| `libnfs2se.so` | the whole wrapper + game (`src/*.c` + the `src/Cpp/NFS2SE.cpp` unity build + `MemoryTranslate.cpp`) |
+
+`SDL_main` in the stub:
+1. `mmap`s `[0x10000000, 0x18000000)` (128 MB, `PROT_NONE`, `MAP_FIXED_NOREPLACE`),
+2. `android_dlopen_ext("libnfs2se.so", …, ANDROID_DLEXT_RESERVED_ADDRESS)` into
+   that range,
+3. `dlsym("nfs2se_main")` and calls it.
+
+`libnfs2se.so` needs ~25 MB of address space (0x17c0728 incl. the ~20 MB BSS
+holding `DataLayout`/`BssLayout`), so 128 MB is generous.  **It must never be
+loaded via `System.loadLibrary`** — Java loading it first would map it high and
+the later `dlopen` would just return that handle.
+
+The reserved range is the gap between the pool chunks created by `pool_grow`
+(`[0x01B9E000,0x10000000)`, `[0x18000000,0x20000000)`, `[0x20000000,0x40000000)`,
+`[0x40000000,0x80840000)`).  `pool_grow` hardcodes `low_start = 0x18000000` on
+Android: `_end` is not meaningful (and may not even link) in a shared object.
+
+Note that clang moves `_data` into `.bss` plus a runtime initializer on Android,
+because the truncating casts are not link-time constants in PIC code — so there
+are no `R_AARCH64_ABS32` dynamic relocations (which bionic would reject as "out
+of range" for a library mapped above 4 GB), but the truncation still happens at
+runtime, which is exactly why the low mapping is required.
+
+### Build system
+
+* `src/Android/app/jni/CMakeLists.txt` + `jni/src/CMakeLists.txt` (CMake replaced
+  the old SDL2-era `Android.mk` files; SDL3 is built from source via
+  `add_subdirectory(SDL)`).
+* `jni/SDL` is a symlink/junction to the unpacked SDL3 sources; SDL3's Java glue
+  is compiled from `jni/SDL/android-project/…` via an extra `java.srcDirs` entry,
+  so the old `app/src/main/java/org/libsdl` symlink is gone.
+* AGP 8.13.1 / Gradle 8.13 / NDK 28.2.13676358 / compileSdk 35 / minSdk 21.
+* `useLegacyPackaging = true` (→ `extractNativeLibs="true"`) so `libnfs2se.so`
+  exists as a file for `dlopen`.
+* `AndroidManifest.xml` replaced `AndroidManifest.xml.in` (version now comes
+  from `build.gradle`).
+
+### SDL2 → SDL3 fixes in the Android code paths
+
+| Old | New |
+|---|---|
+| `SDL_AndroidRequestPermission(perm)` | `SDL_RequestAndroidPermission(perm, cb, NULL)` — asynchronous, so `WrapperInit` waits up to 15 s on `androidPermissionResult`; a refusal is no longer fatal |
+| `SDL_AndroidGetInternalStoragePath()` | `SDL_GetAndroidInternalStoragePath()` |
+| `SDL_HINT_ANDROID_BLOCK_ON_PAUSE_PAUSEAUDIO` | removed in SDL3 |
+| `SDL_HINT_ACCELEROMETER_AS_JOYSTICK` | removed in SDL3 (it still exists in `SDL_oldnames.h` as a poisoned identifier, so the old `#ifdef` guard did not help); `AccelerometerAsJoystick=` in the config is now ignored |
+
+Game data: `chdir("/sdcard/NFSIISE")`, falling back to
+`SDL_GetAndroidExternalStoragePath()`
+(`/sdcard/Android/data/org.zaps166.NFSIISE/files`) when that fails, which is the
+only directory reachable without "All files access" on Android 11+.
+
+### Other source changes needed by the unity build
+
+`src/Cpp/Stubs.cpp` got a `#pragma once`: the desktop build excludes it from the
+source list and reaches it only through `Memory.cpp`, but `NFS2SE.cpp` includes
+both, which produced ~2900 redefinition errors.

@@ -90,8 +90,11 @@ static int add_pool_chunk(void *base)
 
 /* _end linker symbol — marks the end of the binary's BSS.  The lowest
    pool chunk starts at the next page boundary after _end so that x86
-   VAs just above the data segment are covered. */
+   VAs just above the data segment are covered.  Not available (and not
+   meaningful) when the game is a shared library, as on Android. */
+#ifndef __ANDROID__
 extern char _end[];
+#endif
 
 static int pool_grow(void)
 {
@@ -101,9 +104,15 @@ static int pool_grow(void)
 	   If _end is above POOL_LOW_MAX (binary has large BSS), use a
 	   fixed low address that is safely past our BSS end but still
 	   below the mid chunk. */
+#ifdef __ANDROID__
+	/* libnfs2se.so is loaded into [0x10000000, 0x18000000) by the loader
+	   stub, so the low chunk must start right above it. */
+	uintptr_t low_start = 0x18000000;
+#else
 	uintptr_t low_start = ((uintptr_t)_end + page_size - 1) & ~(uintptr_t)(page_size - 1);
 	if (low_start >= POOL_LOW_MAX || low_start + POOL_SIZE >= 0x20000000U)
 		low_start = 0x18000000;  /* fixed: safely past 0x11a51948 BSS end */
+#endif
 
 	/* Non-overlapping identity pool ranges.  Each range must end
 	   before (or at) the next range's start, otherwise MAP_FIXED_
@@ -675,7 +684,7 @@ static void initializeSDL2()
 	SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
 	SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "0");
 	SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE, "0");
-	SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE_PAUSEAUDIO, "0");
+	/* SDL_HINT_ANDROID_BLOCK_ON_PAUSE_PAUSEAUDIO was removed in SDL3 */
 #endif
 	SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
 	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
@@ -683,6 +692,17 @@ static void initializeSDL2()
 	if (!SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS))
 		fprintf(stderr, "SDL init failed: %s\n", SDL_GetError());
 }
+
+#ifdef __ANDROID__
+/* Result of the asynchronous SDL3 permission request: -1 pending, 0 denied, 1 granted */
+static volatile int androidPermissionResult = -1;
+static void SDLCALL androidPermissionCallback(void *userdata, const char *permission, bool granted)
+{
+	(void)userdata;
+	(void)permission;
+	androidPermissionResult = granted ? 1 : 0;
+}
+#endif
 
 #ifdef SWAP_WINDOW_AND_GL_THREAD
 REALIGN
@@ -702,18 +722,37 @@ void WrapperInit(void)
 	SDL_HideCursor();
 
 #ifdef __ANDROID__
-	if (!SDL_AndroidRequestPermission("android.permission.READ_EXTERNAL_STORAGE"))
+	/* SDL3 permission requests are asynchronous - wait (bounded) for the answer.
+	   The permission is useless on Android 11+ (scoped storage), so a refusal is
+	   not fatal: the app-specific external directory is used as a fallback. */
+	androidPermissionResult = -1;
+	if (SDL_RequestAndroidPermission("android.permission.READ_EXTERNAL_STORAGE", androidPermissionCallback, NULL))
 	{
-		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, "No permissions to read the external storage.", NULL);
-		exit(-1);
+		const Uint64 deadline = SDL_GetTicks() + 15000;
+		while (androidPermissionResult < 0 && SDL_GetTicks() < deadline)
+		{
+			SDL_PumpEvents();
+			SDL_Delay(10);
+		}
 	}
-	chdir("/sdcard/NFSIISE");
+	/* Game data location: /sdcard/NFSIISE (needs "all files access" on
+	   Android 11+), otherwise the app-specific external storage directory
+	   (/sdcard/Android/data/<package>/files), which needs no permission. */
+	if (chdir("/sdcard/NFSIISE") != 0)
+	{
+		const char *extPath = SDL_GetAndroidExternalStoragePath();
+		if (!extPath || chdir(extPath) != 0)
+		{
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, "Cannot access the game data directory.", NULL);
+			exit(-1);
+		}
+	}
 #endif
 
 #if defined(WIN32)
 	const char *homeDir = getenv("AppData");
 #elif defined(__ANDROID__)
-	const char *homeDir = SDL_AndroidGetInternalStoragePath();
+	const char *homeDir = SDL_GetAndroidInternalStoragePath();
 #else
 	const char *homeDir = getenv("HOME");
 #endif
@@ -903,10 +942,9 @@ void WrapperInit(void)
 			else if (!strncasecmp("LinuxCOM4=", line, 10))
 				serialPort[3] = strdup(line + 10);
 #endif
-#if defined(__ANDROID__) && defined(SDL_HINT_ACCELEROMETER_AS_JOYSTICK)
-			else if (!strncasecmp("AccelerometerAsJoystick=", line, 24))
-				SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, line + 24);
-#endif
+			/* AccelerometerAsJoystick= is ignored: SDL3 dropped
+			   SDL_HINT_ACCELEROMETER_AS_JOYSTICK in favour of
+			   SDL_SetGamepadSensorEnabled */
 		}
 		fclose(f);
 	}
@@ -1071,7 +1109,16 @@ REALIGN int32_t SDL_NumJoysticks_wrap(void)
 }
 
 #ifdef NFS_CPP
+#ifdef __ANDROID__
+/* On Android the game lives in libnfs2se.so, which must be mapped into the
+   low 4 GB (truncated 32-bit pointers).  The small libmain.so loader stub
+   (src/Android/app/jni/src/Loader.c) reserves that address range, dlopens
+   this library into it and then calls nfs2se_main. */
+__attribute__((visibility("default")))
+int nfs2se_main(int argc, char *argv[])
+#else
 int main(int argc, char *argv[])
+#endif
 {
 	void nfs2seEntrypoint();
 	struct stat st;

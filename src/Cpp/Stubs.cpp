@@ -1,3 +1,4 @@
+#pragma once /* included from both Memory.cpp and the NFS2SE.cpp unity build */
 #include "Game.h"
 Fn(void) sub_401080(Game *self) {self->_sub_401080();}
 Fn(void) sub_401090(Game *self) {self->_sub_401090();}
