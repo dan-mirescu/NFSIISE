@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "../Glide2x.h"
+#include "../TouchControls.h"
 #include <stdlib.h>
 
 #if defined(HOST_64BIT)
@@ -188,6 +189,40 @@ const char g_fShaderDispSrc[] =
 	"}"
 ;
 
+/* On-screen touch buttons: plain coloured triangles in window space */
+const char g_vShaderOverlaySrc[] =
+#ifdef GLES2
+	"precision mediump float;"
+#else
+	"#version 110\n"
+#endif
+
+	"attribute vec2 aPosition;"
+	"attribute vec4 aColor;"
+
+	"varying vec4 vColor;"
+
+	"void main()"
+	"{"
+		"vColor = aColor;"
+		"gl_Position = vec4(aPosition.x * 2.0 - 1.0, 1.0 - aPosition.y * 2.0, 0.0, 1.0);"
+	"}"
+;
+const char g_fShaderOverlaySrc[] =
+#ifdef GLES2
+	"precision mediump float;"
+#else
+	"#version 110\n"
+#endif
+
+	"varying vec4 vColor;"
+
+	"void main()"
+	"{"
+		"gl_FragColor = vColor;"
+	"}"
+;
+
 #define MaxTriangles 0x000400
 #define TextureMem   0x200000
 #define VertexSnap   0x0C0000
@@ -264,6 +299,10 @@ static GLint g_aPositionLoc, g_aTexCoordLoc, g_aColorLoc, g_aFogLoc, g_uMatrixLo
 /* GLSL display */
 static GLuint g_vShaderDisp, g_fShaderDisp, g_shaderProgramDisp;
 static GLint g_aPositionLocDisp, g_aTexCoordLocDisp, g_uGammaLocDisp;
+
+/* GLSL touch controls overlay */
+static GLuint g_vShaderOverlay, g_fShaderOverlay, g_shaderProgramOverlay;
+static GLint g_aPositionLocOverlay, g_aColorLocOverlay;
 
 /* Framebuffer */
 static uint32_t g_framebuffer;
@@ -407,6 +446,39 @@ static inline BOOL loadShaders()
 		glUseProgram(0);
 	}
 
+	{
+		const GLint vShaderLen = sizeof(g_vShaderOverlaySrc) - 1;
+		const GLint fShaderLen = sizeof(g_fShaderOverlaySrc) - 1;
+
+		const GLchar *vShaderSrc = g_vShaderOverlaySrc;
+		const GLchar *fShaderSrc = g_fShaderOverlaySrc;
+
+		g_vShaderOverlay = glCreateShader(GL_VERTEX_SHADER);
+		g_fShaderOverlay = glCreateShader(GL_FRAGMENT_SHADER);
+
+		glShaderSource(g_vShaderOverlay, 1, &vShaderSrc, &vShaderLen);
+		glShaderSource(g_fShaderOverlay, 1, &fShaderSrc, &fShaderLen);
+
+		glCompileShader(g_vShaderOverlay);
+		if (!checkShaderCompilation(g_vShaderOverlay))
+			return false;
+		glCompileShader(g_fShaderOverlay);
+		if (!checkShaderCompilation(g_fShaderOverlay))
+			return false;
+
+		g_shaderProgramOverlay = glCreateProgram();
+
+		glAttachShader(g_shaderProgramOverlay, g_vShaderOverlay);
+		glAttachShader(g_shaderProgramOverlay, g_fShaderOverlay);
+
+		glLinkProgram(g_shaderProgramOverlay);
+		if (!checkShaderProgram(g_shaderProgramOverlay))
+			return false;
+
+		g_aPositionLocOverlay = glGetAttribLocation(g_shaderProgramOverlay, "aPosition");
+		g_aColorLocOverlay = glGetAttribLocation(g_shaderProgramOverlay, "aColor");
+	}
+
 	return true;
 }
 
@@ -519,6 +591,50 @@ static void useGameProgram(BOOL gameProgram)
 		glVertexAttribPointer(g_aPositionLocDisp, 2, GL_FLOAT, GL_FALSE, 0, g_verticesDisp);
 		glVertexAttribPointer(g_aTexCoordLocDisp, 2, GL_FLOAT, GL_FALSE, 0, g_textureCoordDisp);
 	}
+}
+
+/* Draws the on-screen touch buttons over the finished frame.  Must run while
+   the display program is active (useGameProgram(false)), i.e. right before
+   the buffer swap, and restores that state when it is done. */
+static void drawTouchControls(void)
+{
+	int32_t vertexCount = 0;
+	const float *vertices = touchControlsGeometry(winWidth, winHeight, &vertexCount);
+	if (!vertices || vertexCount <= 0)
+		return;
+
+	const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+	GLint scissorBox[4] = {};
+	glGetIntegerv(GL_SCISSOR_BOX, scissorBox);
+	glDisable(GL_SCISSOR_TEST);
+
+	/* The buttons live in window space, outside the game's 4:3 area */
+	glViewport(0, 0, winWidth, winHeight);
+
+	glDisableVertexAttribArray(g_aPositionLocDisp);
+	glDisableVertexAttribArray(g_aTexCoordLocDisp);
+
+	glUseProgram(g_shaderProgramOverlay);
+
+	glEnableVertexAttribArray(g_aPositionLocOverlay);
+	glEnableVertexAttribArray(g_aColorLocOverlay);
+	glVertexAttribPointer(g_aPositionLocOverlay, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), vertices);
+	glVertexAttribPointer(g_aColorLocOverlay, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), vertices + 2);
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+
+	glDisableVertexAttribArray(g_aPositionLocOverlay);
+	glDisableVertexAttribArray(g_aColorLocOverlay);
+
+	glBlendFunc(GL_SRC_ALPHA, g_blendFuncDFactor);
+	glScissor(scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3]);
+	if (scissorEnabled)
+		glEnable(GL_SCISSOR_TEST);
+
+	/* Back to the state grBufferSwap had before */
+	useGameProgram(false);
 }
 
 static void createContext()
@@ -640,6 +756,10 @@ static void destroyContext()
 	glDeleteProgram(g_shaderProgramDisp);
 	glDeleteShader(g_fShaderDisp);
 	glDeleteShader(g_vShaderDisp);
+
+	glDeleteProgram(g_shaderProgramOverlay);
+	glDeleteShader(g_fShaderOverlay);
+	glDeleteShader(g_vShaderOverlay);
 
 	SDL_GL_DestroyContext(g_glCtx);
 	g_glCtx = NULL;
@@ -860,6 +980,8 @@ REALIGN STDCALL void grBufferSwap(int swap_interval)
 	glBindTexture(GL_TEXTURE_2D, g_framebufferTexture);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glBindTexture(GL_TEXTURE_2D, 0);
+
+	drawTouchControls();
 
 	SDL_GL_SwapWindow(sdlWin);
 

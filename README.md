@@ -163,6 +163,28 @@ wrapper truncates every pointer it hands to the translated game code to 32 bits.
   `PTR32`); on Linux the same thing is achieved with `-no-pie`.
   `libnfs2se.so` must therefore never be loaded with `System.loadLibrary`.
 
+### On-screen touch controls
+
+Seven translucent buttons are drawn over the game (steer left/right,
+accelerate, brake, `Esc`, `C` for the camera view and `F11` to reset the car).
+A press pushes the matching key event,
+so the game sees an ordinary keyboard; a finger that misses every button still
+works as before (drag moves the pointer, a tap is Enter).  They are enabled by
+default on Android only and are configured in `nfs2se.conf`:
+
+```
+TouchControls=1
+TouchControlsOpacity=40
+TouchControlsScale=100
+TouchButtons=left:9,76,10;right:27,76,10;down:73,78,8.5;up:91,76,11;esc:5,11,5.5;c:87,11,4.5;f11:95,11,5.5
+```
+
+Each button is `key:centerX,centerY,radius`, where `centerX` is a percentage of
+the window width and `centerY`/`radius` are percentages of its height.  Usable
+keys are `left`, `right`, `up`, `down`, `esc`, `enter`, `space`, `tab`,
+`shift`, `ctrl`, `f1`-`f12` and single letters or digits.  The overlay is drawn
+by the OpenGL 2 / GLES2 backend; the legacy OpenGL 1 backend does not draw it.
+
 ### Game data
 
 Copy `gamedata`, `fedata`, `install.win`, `text.*` and `nfs2se.conf` (renamed

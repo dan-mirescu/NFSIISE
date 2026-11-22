@@ -61,6 +61,18 @@
 #	Specify which button on second joystick will be used as F12 key (car reset, see above)
 #AccelerometerAsJoystick:
 #	Use accelerometer on Android as 3-axis joystick if no other joystick is connected (1 - use, default)
+#TouchControls:
+#	On-screen touch buttons (0 - disabled, 1 - enabled; default: enabled on Android only)
+#TouchControlsOpacity:
+#	Opacity of the on-screen buttons in percent (0 - 100, default: 40; 0 hides them but keeps them working)
+#TouchControlsScale:
+#	Size of the on-screen buttons in percent (50 - 300, default: 100)
+#TouchButtons:
+#	Custom button layout: "key:centerX,centerY,radius;…"
+#	centerX is a percentage of the window width, centerY and radius are percentages of its height.
+#	Keys: left, right, up, down, esc, enter, space, tab, shift, ctrl, f1 - f12 and single letters/digits.
+#	Default: left:9,76,10;right:27,76,10;down:73,78,8.5;up:91,76,11;esc:5,11,5.5;c:87,11,4.5;f11:95,11,5.5
+#	("c" switches the camera view, "f11" resets the car)
 #LinearSoundInterpolation:
 #	0 - Original samplerate - 22050Hz (system-dependent resampling, default)
 #	1 - Linear interpolated sound to 44100Hz (forced artificial highs)
@@ -92,6 +104,10 @@ Joystick1EscButton=-1
 Joystick0ResetButton=-1
 Joystick1ResetButton=-1
 AccelerometerAsJoystick=1
+#TouchControls=1
+TouchControlsOpacity=40
+TouchControlsScale=100
+#TouchButtons=left:9,76,10;right:27,76,10;down:73,78,8.5;up:91,76,11;esc:5,11,5.5;c:87,11,4.5;f11:95,11,5.5
 LinearSoundInterpolation=0
 Port1=1030
 Port2=1029

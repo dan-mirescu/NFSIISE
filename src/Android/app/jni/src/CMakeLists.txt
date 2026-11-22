@@ -27,6 +27,7 @@ add_library(nfs2se SHARED
   ${NFS_SRC_DIR}/Glide2x.c
   ${NFS_SRC_DIR}/Kernel32.c
   ${NFS_SRC_DIR}/Timer.c
+  ${NFS_SRC_DIR}/TouchControls.c
   ${NFS_SRC_DIR}/User32.c
   ${NFS_SRC_DIR}/WinMM.c
   ${NFS_SRC_DIR}/Wrapper.c

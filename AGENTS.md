@@ -843,3 +843,44 @@ only directory reachable without "All files access" on Android 11+.
 `src/Cpp/Stubs.cpp` got a `#pragma once`: the desktop build excludes it from the
 source list and reaches it only through `Memory.cpp`, but `NFS2SE.cpp` includes
 both, which produced ~2900 redefinition errors.
+
+## On-screen touch controls (November 2026)
+
+`src/TouchControls.c` / `.h` draw translucent buttons over the game and turn
+presses into key events.  Nothing in the translated game code is touched.
+
+* **Input** — `User32.c` gives every `SDL_EVENT_FINGER_*` to
+  `touchControlsFinger{Down,Motion,Up}()` first; when the finger belongs to a
+  button the event is consumed, otherwise the existing pointer emulation and
+  tap-to-Enter behaviour run unchanged.  A press pushes a synthetic
+  `SDL_EVENT_KEY_DOWN` (release: `KEY_UP`) with the button's keycode and
+  scancode, which the normal pump turns into `WM_KEYDOWN`/`WM_KEYUP` — the same
+  trick `tapEnterTimerCallback` already used.  Nothing reads
+  `SDL_GetKeyboardState`, so pushed events are enough.  Fingers are tracked
+  individually (`SDL_FingerID`), so steering and accelerating at the same time
+  works, and sliding off a button releases its key.
+  `SDL_EVENT_WILL_ENTER_BACKGROUND` calls `touchControlsReleaseAll()` so no key
+  stays down while the app is away.
+* **Drawing** — `touchControlsGeometry()` returns plain triangles (x, y in
+  0-1 window space, y down, plus RGBA), built procedurally: a disc, a ring and
+  either an arrow or a label drawn with a built-in 3x5 dot font.  No textures,
+  no assets.  `Glide2x/OpenGL2.c` renders them with a third shader program
+  (`g_shaderProgramOverlay`, position + colour only) in `drawTouchControls()`,
+  called from `grBufferSwap()` after the framebuffer blit and before
+  `SDL_GL_SwapWindow()`.  It disables scissoring and sets the full-window
+  viewport so buttons can sit on the letterbox bars, then restores the blend
+  func and calls `useGameProgram(false)` to put the display state back.
+  The legacy `OpenGL1.c` backend has no overlay.
+* **Configuration** — `TouchControls`, `TouchControlsOpacity`,
+  `TouchControlsScale` and a `TouchButtons` layout string (`key:cx,cy,r;…` in
+  percent) in `nfs2se.conf`; parsed in `Wrapper.c`, whose config line buffer
+  grew from 128 to 512 bytes for the layout string.  Enabled by default on
+  Android only.
+
+**Verified on the device** (Galaxy S25, Android 17): the overlay renders
+correctly over menus and movies (labels, arrows, letterbox placement) and the
+buttons drive the game.  Note that the intro movie ignores the injected keys,
+so test in the menu or in a race, not during the intro.
+
+Default layout: steering left/right and accelerate/brake under the thumbs,
+`esc`, `c` (camera view) and `f11` (reset car) along the top edge.

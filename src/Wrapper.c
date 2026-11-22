@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include "Cpp/ByteUtils.h"
+#include "TouchControls.h"
 
 #if defined(HOST_64BIT)
 #if !defined(MAP_FIXED_NOREPLACE) && defined(MAP_FIXED)
@@ -849,7 +850,7 @@ void WrapperInit(void)
 	else
 	{
 		BOOL canParseNextLine = true;
-		char line[128];
+		char line[512]; /* long enough for a custom "TouchButtons=" layout */
 		while (fgets(line, sizeof line, f))
 		{
 			uint32_t nPos = strlen(line) - 1;
@@ -945,6 +946,17 @@ void WrapperInit(void)
 			/* AccelerometerAsJoystick= is ignored: SDL3 dropped
 			   SDL_HINT_ACCELEROMETER_AS_JOYSTICK in favour of
 			   SDL_SetGamepadSensorEnabled */
+			else if (!strncasecmp("TouchControls=", line, 14))
+				touchControlsSetEnabled(!!atoi(line + 14));
+			else if (!strncasecmp("TouchControlsOpacity=", line, 21))
+				touchControlsSetOpacity(atoi(line + 21));
+			else if (!strncasecmp("TouchControlsScale=", line, 19))
+				touchControlsSetScale(atoi(line + 19));
+			else if (!strncasecmp("TouchButtons=", line, 13))
+			{
+				if (!touchControlsSetLayout(line + 13))
+					fprintf(stderr, "Invalid \"TouchButtons\" layout, using the default one\n");
+			}
 		}
 		fclose(f);
 	}

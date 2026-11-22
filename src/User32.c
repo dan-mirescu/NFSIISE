@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "User32.h"
+#include "TouchControls.h"
 
 #include <SDL3/SDL_messagebox.h>
 #include <SDL3/SDL_events.h>
@@ -111,6 +112,8 @@ REALIGN STDCALL BOOL GetMessageA_wrap(MSG *msg, void *hWnd, uint32_t wMsgFilterM
 			switch (event.type)
 			{
 				case SDL_EVENT_WILL_ENTER_BACKGROUND:
+					/* Don't leave a button stuck down while the app is away */
+					touchControlsReleaseAll();
 					msg->uMsg = WM_KILLFOCUS;
 					break;
 				case SDL_EVENT_DID_ENTER_FOREGROUND:
@@ -306,6 +309,8 @@ REALIGN STDCALL BOOL GetMessageA_wrap(MSG *msg, void *hWnd, uint32_t wMsgFilterM
 					break;
 				case SDL_EVENT_FINGER_DOWN:
 				{
+					if (touchControlsFingerDown(event.tfinger.fingerID, event.tfinger.x, event.tfinger.y))
+						break;
 					if (touchId == 0 && event.tfinger.pressure > 0.0f && SDL_GetTouchDeviceType(event.tfinger.touchID) == SDL_TOUCH_DEVICE_DIRECT)
 					{
 						touchId = event.tfinger.touchID;
@@ -314,6 +319,8 @@ REALIGN STDCALL BOOL GetMessageA_wrap(MSG *msg, void *hWnd, uint32_t wMsgFilterM
 				} break;
 				case SDL_EVENT_FINGER_UP:
 				{
+					if (touchControlsFingerUp(event.tfinger.fingerID))
+						break;
 					if (touchId == event.tfinger.touchID)
 					{
 						if (touchTimeStamp > 0 && tapEnterTimerId == 0 && SDL_GetTicks() - touchTimeStamp < 250)
@@ -329,6 +336,8 @@ REALIGN STDCALL BOOL GetMessageA_wrap(MSG *msg, void *hWnd, uint32_t wMsgFilterM
 				} break;
 				case SDL_EVENT_FINGER_MOTION:
 				{
+					if (touchControlsFingerMotion(event.tfinger.fingerID, event.tfinger.x, event.tfinger.y))
+						break;
 					if (touchId == event.tfinger.touchID)
 					{
 						touchDX += event.tfinger.dx;
